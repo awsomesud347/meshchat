@@ -54,7 +54,7 @@ Setup does the following:
 2. Finds Python and creates `.venv\` (a private Python for this folder only).
 3. Installs packages **offline** from `wheels\`. It only uses the internet if that fails.
 4. Finds the model and checks its SHA-256.
-5. Runs the tests (27, with simulated radios including crash cases).
+5. Runs the tests (34, with simulated radios including crash cases).
 6. Runs the codec check (stage 2).
 7. Lists the serial ports.
 
@@ -65,7 +65,7 @@ Using py -3.12
 packages OK
 model SHA-256 OK
 --- tests (simulated radios, no hardware needed) ---
-27 passed
+34 passed
 --- codec check (must say fingerprint 422ac23fca10 and PASS) ---
 fingerprint 422ac23fca10  OK
 ...
@@ -282,6 +282,18 @@ If a board crashes over and over, unplug it, wait 5 s, plug it back in. meshchat
 
 Keep a recorded video of a good run as a backup.
 
+**Demo GUI.** For the audience, run the browser version instead of `mc chat`. It's the same engine, so receipts, retries and crash recovery all work the same. The page opens by itself:
+
+```powershell
+.\mc gui --port COM5                 # H
+.\mc gui --port COM4 --dest !f99260d4   # F
+```
+
+Every message shows its encoding, the bytes it really took on air compared with stock Meshtastic, airtime, and each delivery step (on air → radio ACK → verified) with timings. Click a message to see what each encoding would cost and the packet bytes. The side panel totals bytes and airtime saved, average delivery time and delivered/sent. The `⋯` menu has the uncompressed and corruption demos.
+
+- The GUI holds the COM port, so close `mc chat` first. Closing the browser tab doesn't stop it; Ctrl+C in its terminal does.
+- **If a board dies on stage:** `.\mc gui --loopback` runs the same page against a simulated peer inside the laptop, with LongFast airtimes, so you can still show it.
+
 ---
 
 ## Command reference
@@ -294,6 +306,9 @@ Keep a recorded video of a good run as a backup.
       --max-resends 3            automatic resend rounds per message
       --no-auto-resend           never resend automatically (use /retry)
       -v                         show every frame in hex
+.\mc gui --port COMx [--dest !id]   the chat as a browser page with live metrics (same options as chat)
+      --loopback                 no radio: simulated peer (demo backup)
+      --http-port 8765           local web port
 .\mc explain "text"              per-token bit cost
 .\mc selftest                    two endpoints in one process, no radio
 ```

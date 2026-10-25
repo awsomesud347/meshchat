@@ -139,7 +139,7 @@ class Link:
         t0 = time.time()
         self.emit({"event": "send", "msg_id": f"{out.msg_id:08x}", "attempt": number, "method": att.method,
                    "text_bytes": out.text_bytes, "codec_bytes": codec_bytes, "frame_bytes": len(frame),
-                   "dest": dest, "frame": frame.hex()})
+                   "dest": dest, "frame": frame.hex(), "text": out.text})
         try:
             self.t.send(frame, dest, want_ack=True, on_radio_ack=on_radio_ack)
         except Exception as e:

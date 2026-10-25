@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meshchat</title>
+<style>
+:root {
+  --bg: #0b0b0b; --surface: #131313; --surface-2: #1b1b1b; --surface-3: #242424;
+  --border: #262626; --border-2: #333;
+  --text: #f2f2f2; --text-2: #a3a3a3; --text-3: #6b6b6b;
+  --mine-bg: #f2f2f2; --mine-text: #0b0b0b; --theirs-bg: #1f1f1f; --theirs-text: #f2f2f2;
+  --bar: #f2f2f2; --bar-dim: #3a3a3a;
+  --bad: #d4555a;
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #f7f7f7; --surface: #ffffff; --surface-2: #f0f0f0; --surface-3: #e6e6e6;
+  --border: #e3e3e3; --border-2: #d4d4d4;
+  --text: #111111; --text-2: #555555; --text-3: #959595;
+  --mine-bg: #111111; --mine-text: #f7f7f7; --theirs-bg: #e9e9e9; --theirs-text: #111111;
+  --bar: #111111; --bar-dim: #d0d0d0;
+  --bad: #c0393f;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text); font: 15px/1.45 var(--sans);
+  -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; overflow: hidden;
+}
+.num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+button { font: inherit; color: inherit; }
+
+/* ---------------------------------------------------------------- header */
+header {
+  flex: none; display: flex; align-items: center; gap: 20px; padding: 14px 24px;
+  border-bottom: 1px solid var(--border); background: var(--bg);
+}
+.brand { font: 600 17px/1 var(--display); letter-spacing: -0.01em; white-space: nowrap; }
+.brand span { color: var(--text-3); font-weight: 400; }
+.nodes { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; }
+.node { min-width: 0; }
+.node .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node .id { font: 12px var(--mono); color: var(--text-3); }
+.link-line { flex: 0 1 90px; height: 1px; background: var(--border-2); position: relative; min-width: 28px; }
+.link-line i {
+  position: absolute; top: -3px; left: 0; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text); opacity: 0;
+}
+.link-line i.fly-r { animation: fly-r var(--dur, 700ms) linear forwards; }
+.link-line i.fly-l { animation: fly-l var(--dur, 700ms) linear forwards; }
+@keyframes fly-r { 0% { left: 0; opacity: 1 } 100% { left: calc(100% - 7px); opacity: 1 } }
+@keyframes fly-l { 0% { left: calc(100% - 7px); opacity: 1 } 100% { left: 0; opacity: 1 } }
+.status { display: flex; gap: 8px; flex: none; }
+.pill {
+  display: flex; align-items: center; gap: 8px; padding: 6px 11px; border: 1px solid var(--border);
+  border-radius: 999px; font-size: 13px; color: var(--text-2); white-space: nowrap; background: var(--surface);
+}
+.pill b { color: var(--text); font-weight: 600; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text); flex: none; }
+.dot.wait { background: var(--text-3); animation: pulse 1.1s ease-in-out infinite; }
+.dot.bad { background: var(--bad); }
+@keyframes pulse { 50% { opacity: .25 } }
+.bars { display: flex; align-items: flex-end; gap: 2px; height: 12px; }
+.bars span { width: 3px; background: var(--bar-dim); border-radius: 1px; }
+.bars span.on { background: var(--text); }
+.iconbtn {
+  width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface);
+  cursor: pointer; display: grid; place-items: center; color: var(--text-2); flex: none;
+}
+.iconbtn:hover { color: var(--text); border-color: var(--border-2); }
+
+/* ---------------------------------------------------------------- layout */
+main {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-areas: "chat side";
+}
+.chat { grid-area: chat; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+.side { grid-area: side; overflow-y: auto; padding: 22px 20px; display: flex; flex-direction: column; gap: 12px; }
+#scroll { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
+#log { max-width: 820px; margin: 0 auto; padding: 28px 24px 12px; display: flex; flex-direction: column; gap: 18px; }
+
+/* ---------------------------------------------------------------- messages */
+.row { display: flex; flex-direction: column; max-width: min(78%, 620px); animation: rise .28s ease-out; }
+.row.out { align-self: flex-end; align-items: flex-end; }
+.row.in { align-self: flex-start; align-items: flex-start; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+.still, .still * { animation: none !important; }
+.bubble {
+  padding: 11px 15px; border-radius: 18px; font-size: 16.5px; line-height: 1.4; white-space: pre-wrap;
+  overflow-wrap: anywhere; cursor: pointer; transition: transform .15s ease, opacity .2s;
+}
+.bubble:active { transform: scale(.985); }
+.out .bubble { background: var(--mine-bg); color: var(--mine-text); border-bottom-right-radius: 6px; }
+.in .bubble { background: var(--theirs-bg); color: var(--theirs-text); border-bottom-left-radius: 6px; }
+.row.pending .bubble { opacity: .55; }
+.row.failed .bubble { box-shadow: inset 0 0 0 1.5px var(--bad); }
+.meta { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-2); }
+.out .meta { align-items: flex-end; text-align: right; }
+.line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.out .line { justify-content: flex-end; }
+.tag {
+  font: 600 10.5px/1 var(--mono); letter-spacing: .06em; padding: 4px 6px 3px; border-radius: 5px;
+  border: 1px solid var(--border-2); color: var(--text);
+}
+.tag.solid { background: var(--text); color: var(--bg); border-color: var(--text); }
+.big { font: 600 13.5px var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
+.save { font: 600 12.5px var(--mono); color: var(--text); }
+.sep { color: var(--text-3); }
+.steps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--text-3); }
+.out .steps { justify-content: flex-end; }
+.step { display: inline-flex; align-items: center; gap: 5px; transition: color .3s; }
+.step::before { content: ""; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid currentColor; }
+.step.done { color: var(--text-2); }
+.step.done::before { background: currentColor; }
+.step.now { color: var(--text); }
+.step.now::before { animation: pulse 1s infinite; }
+.step.bad { color: var(--bad); }
+.step.bad::before { background: currentColor; }
+.step .t { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.arrow { color: var(--text-3); opacity: .6; }
+.final { font-weight: 600; color: var(--text); }
+.final.bad { color: var(--bad); }
+.dim { color: var(--text-3); }
+
+.sys { align-self: center; max-width: 90%; text-align: center; font-size: 12.5px; color: var(--text-3); animation: rise .28s ease-out; }
+.sys.bad { color: var(--bad); }
+.sys pre { margin: 0; text-align: left; font: 12px/1.5 var(--mono); color: var(--text-2); white-space: pre-wrap;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.empty { margin: auto; text-align: center; color: var(--text-3); padding: 60px 20px; }
+.empty b { display: block; font: 600 22px var(--display); color: var(--text-2); margin-bottom: 6px; letter-spacing: -0.01em; }
+
+/* ---------------------------------------------------------------- details */
+.details {
+  margin-top: 10px; width: min(560px, 78vw); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 16px 18px; text-align: left; animation: rise .22s ease-out; color: var(--text-2);
+  font-size: 13px;
+}
+.details h4 { margin: 0 0 10px; font: 600 11px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
+.details section + section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.cmp { display: grid; grid-template-columns: 128px 1fr auto; gap: 7px 12px; align-items: center; }
+.cmp .lb { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp .lb.sel { color: var(--text); font-weight: 600; }
+.track { height: 8px; background: var(--surface-3); border-radius: 4px; overflow: hidden; }
+.track i { display: block; height: 100%; background: var(--bar-dim); border-radius: 4px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
+.track i.sel { background: var(--bar); }
+.cmp .v { font: 12px var(--mono); text-align: right; white-space: nowrap; color: var(--text-2); }
+.cmp .v.sel { color: var(--text); font-weight: 600; }
+.surv { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.surv div { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; }
+.surv b { display: block; font: 600 18px var(--mono); color: var(--text); }
+.hex { font: 12px/1.9 var(--mono); display: flex; flex-wrap: wrap; gap: 3px; }
+.hex span { padding: 0 3px; border-radius: 3px; }
+.hex .env { background: var(--surface-3); color: var(--text-2); }
+.hex .hdr { background: var(--text-3); color: var(--bg); }
+.hex .body { background: var(--text); color: var(--bg); }
+.hex .crc { box-shadow: inset 0 0 0 1px var(--text-2); color: var(--text); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 12px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* ---------------------------------------------------------------- side stats */
+.side h3 { margin: 2px 2px 4px; font: 600 11px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 15px 16px 14px; }
+.tile .k { font-size: 12.5px; color: var(--text-2); }
+.tile .v { font: 600 34px/1.1 var(--display); letter-spacing: -0.02em; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
+.tile .s { font: 12px var(--mono); color: var(--text-3); }
+.tile .meter { margin-top: 10px; height: 6px; border-radius: 3px; background: var(--surface-3); position: relative; overflow: hidden; }
+.tile .meter i { position: absolute; inset: 0 auto 0 0; background: var(--bar); border-radius: 3px; transition: width .6s cubic-bezier(.2,.8,.2,1); }
+.side .note { font-size: 12px; color: var(--text-3); padding: 2px 4px; line-height: 1.5; }
+
+/* ---------------------------------------------------------------- compose */
+.compose { flex: none; border-top: 1px solid var(--border); padding: 12px 24px 16px; background: var(--bg); }
+.compose-inner { max-width: 820px; margin: 0 auto; }
+.hint { min-height: 20px; font-size: 12.5px; color: var(--text-3); padding: 0 6px 8px; display: flex; gap: 10px; flex-wrap: wrap; }
+.hint b { color: var(--text); font: 600 12.5px var(--mono); }
+.hint .bad { color: var(--bad); }
+.bar-row { display: flex; gap: 10px; align-items: center; position: relative; }
+#input {
+  flex: 1; min-width: 0; height: 48px; padding: 0 18px; border-radius: 24px; border: 1px solid var(--border-2);
+  background: var(--surface); color: var(--text); font: 16px var(--sans); outline: none; transition: border-color .15s;
+}
+#input:focus { border-color: var(--text-2); }
+#input::placeholder { color: var(--text-3); }
+.send {
+  height: 48px; padding: 0 22px; border-radius: 24px; border: 0; background: var(--text); color: var(--bg);
+  font-weight: 600; cursor: pointer; transition: opacity .15s, transform .1s;
+}
+.send:hover { opacity: .9; }
+.send:active { transform: scale(.97); }
+.send:disabled { opacity: .35; cursor: default; }
+.more { width: 48px; height: 48px; }
+.menu {
+  position: absolute; right: 0; bottom: 58px; background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 14px; padding: 6px; min-width: 260px; box-shadow: 0 12px 40px rgba(0,0,0,.35); z-index: 5;
+  animation: rise .16s ease-out;
+}
+.menu button {
+  display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0; background: none; border-radius: 9px;
+  cursor: pointer;
+}
+.menu button:hover { background: var(--surface-2); }
+.menu small { display: block; color: var(--text-3); font-size: 12px; margin-top: 1px; }
+
+/* ---------------------------------------------------------------- narrow */
+@media (max-width: 1080px) {
+  main { grid-template-columns: minmax(0, 1fr); grid-template-areas: "chat"; }
+  .chat { border-right: 0; }
+  .side { grid-area: auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+    padding: 10px 24px 0; overflow: visible; order: 2; }
+  .side h3, .side .note { display: none; }
+  .tile { padding: 10px 12px; border-radius: 12px; }
+  .tile .v { font-size: 22px; margin: 2px 0; }
+  .tile .meter { display: none; }
+  .chat { display: contents; }
+  main { display: flex; flex-direction: column; }
+  #scroll { order: 1; }
+  .compose { order: 3; }
+}
+@media (max-width: 720px) {
+  header { flex-wrap: wrap; gap: 10px 14px; padding: 12px 16px; }
+  .nodes { order: 3; flex-basis: 100%; }
+  .status { margin-left: auto; }
+  .pill.sig, .pill.codec .txt { display: none; }
+  .side { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 10px 16px 0; }
+  #log { padding: 20px 16px 8px; }
+  .compose { padding: 10px 16px 14px; }
+  .row { max-width: 88%; }
+  .cmp { grid-template-columns: 96px 1fr auto; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">meshchat <span>LoRa</span></div>
+  <div class="nodes">
+    <div class="node"><div class="nm" id="me-name">This laptop</div><div class="id" id="me-id">connecting…</div></div>
+    <div class="link-line" id="link-line"></div>
+    <div class="node"><div class="nm" id="peer-name">Peer</div><div class="id" id="peer-id">waiting for a message</div></div>
+  </div>
+  <div class="status">
+    <div class="pill" id="radio-pill"><span class="dot wait"></span><b>Radio</b><span class="txt">connecting</span></div>
+    <div class="pill codec" id="codec-pill"><span class="dot wait"></span><b>Codec</b><span class="txt">loading</span></div>
+    <div class="pill sig" id="sig-pill"><span class="bars"><span style="height:4px"></span><span style="height:7px"></span><span style="height:10px"></span><span style="height:12px"></span></span><span class="txt num">no signal yet</span></div>
+  </div>
+  <button class="iconbtn" id="theme" title="Light / dark" aria-label="Toggle light or dark theme">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor"/></svg>
+  </button>
+</header>
+
+<main>
+  <div class="chat">
+    <div id="scroll"><div id="log"><div class="empty" id="empty"><b>Say something over LoRa</b>Every message is compressed by the shared language model, sent as one radio packet, and confirmed by a checksum-verified receipt.</div></div></div>
+    <div class="compose">
+      <div class="compose-inner">
+        <div class="hint" id="hint">Type a message. The size it will take on air appears here as you type.</div>
+        <div class="bar-row">
+          <input id="input" autocomplete="off" spellcheck="false" placeholder="Message" maxlength="600">
+          <button class="iconbtn more" id="more" title="More" aria-label="More send options">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+          </button>
+          <button class="send" id="send">Send</button>
+          <div class="menu" id="menu" hidden>
+            <button data-act="raw">Send uncompressed<small>Same text as plain bytes, for comparison</small></button>
+            <button data-act="corrupt">Corruption demo<small>Damage try 1 on purpose: checksum rejects it, raw retry delivers</small></button>
+            <button data-act="probes">Send the 8 reference messages<small>Realistic field reports</small></button>
+            <button data-act="status">Radio status<small>Link, reconnects, undelivered messages</small></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <aside class="side" id="side">
+    <h3>This session</h3>
+    <div class="tile"><div class="k">Bytes on air</div><div class="v" id="s-bytes">–</div><div class="s" id="s-bytes-s">no messages yet</div><div class="meter"><i id="s-bytes-m" style="width:0"></i></div></div>
+    <div class="tile"><div class="k">Airtime</div><div class="v" id="s-air">–</div><div class="s" id="s-air-s">LongFast, per packet</div><div class="meter"><i id="s-air-m" style="width:0"></i></div></div>
+    <div class="tile"><div class="k">Avg delivery</div><div class="v" id="s-rtt">–</div><div class="s" id="s-rtt-s">send → verified receipt</div></div>
+    <div class="tile"><div class="k">Delivered</div><div class="v" id="s-ok">–</div><div class="s" id="s-ok-s">checksum-verified</div></div>
+    <div class="note">Compared with stock Meshtastic, which sends the text as-is. Our numbers include the 10-byte envelope (message id, attempt, time) and the 2-byte checksum.</div>
+  </aside>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Math.round(n).toLocaleString("en-US");
+const secs = (ms) => (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " s";
+const METHOD = { llm: "LLM", unishox2: "UNISHOX2", raw: "RAW" };
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v; else if (k === "style") el.style.cssText = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : String(c));
+  return el;
+}
+
+/* ------------------------------------------------------------------ theme */
+try { const t = localStorage.getItem("meshchat-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+$("theme").onclick = () => {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("meshchat-theme", next); } catch (e) {}
+};
+
+/* ------------------------------------------------------------------ state */
+let msgs = new Map();        // key -> message model
+let order = [];              // keys in arrival order
+let provisional = [];        // texts typed here that the engine has not picked up yet
+let liveSince = Date.now();  // events older than this are replayed history: no animation
+let me = { id: null }, lastSignal = null;
+const previews = new Map();
+
+function outMsg(id) {
+  let m = msgs.get(id);
+  if (!m) {
+    m = { key: id, dir: "out", text: "", rounds: 0, attempts: [], outcome: null, open: location.hash === "#details" };
+    msgs.set(id, m); order.push(id);
+  }
+  return m;
+}
+
+let curLive = true;          // false while the server replays history: those rows appear without animation
+function handle(ev) {
+  const live = curLive = ev.ts >= liveSince;
+  switch (ev.event) {
+    case "send": {
+      const m = outMsg(ev.msg_id);
+      if (ev.text != null) m.text = ev.text;
+      adoptProvisional(m);
+      if (ev.attempt === 1 && m.attempts.length) { m.rounds++; m.attempts = []; m.outcome = null; m.retryWhy = null; }
+      m.attempts[ev.attempt - 1] = { n: ev.attempt, method: ev.method, frame: ev.frame_bytes, text: ev.text_bytes,
+        airPlain: ev.air_ms_plain, airFrame: ev.air_ms_frame, ts: ev.ts, hex: ev.frame, radio: null, decode: null };
+      if (live) flyPacket("r", ev.air_ms_frame);
+      render(m); break;
+    }
+    case "radio_ack": { const a = att(ev); if (a) { a.radio = { ok: ev.ok, detail: ev.detail, ts: ev.ts }; render(msgs.get(ev.msg_id)); } break; }
+    case "decode_ack": {
+      const m = msgs.get(ev.msg_id); if (!m) break;
+      const a = m.attempts[ev.attempt - 1];
+      if (a) { a.decode = { status: ev.status, ts: ev.ts }; if (live) flyPacket("l", 400); }
+      render(m); break;
+    }
+    case "retry": { const m = msgs.get(ev.msg_id); if (m) { m.retryWhy = ev.why; render(m); } break; }
+    case "outcome": {
+      const m = outMsg(ev.msg_id);
+      if (!m.text) m.text = ev.text;
+      adoptProvisional(m);
+      m.outcome = { state: ev.state, reason: ev.reason, air: ev.air_bytes, textBytes: ev.text_bytes, ts: ev.ts };
+      (ev.attempts || []).forEach((x, i) => { if (m.attempts[i]) { m.attempts[i].rtt = x.rtt_s; m.attempts[i].decodeStatus = x.decode_status; } });
+      m.animate = live && ev.state.startsWith("VERIFIED");
+      render(m); stats(); break;
+    }
+    case "late_success": { const m = msgs.get(ev.msg_id); if (m && m.outcome) { m.outcome.state = "VERIFIED_LATE"; render(m); stats(); } break; }
+    case "decoded": {
+      const key = "in:" + ev.from + ":" + ev.msg_id;
+      lastSignal = ev.rssi != null ? { rssi: ev.rssi, snr: ev.snr } : lastSignal; signal();
+      setPeer(ev.from);
+      let m = msgs.get(key);
+      if (!m) {
+        m = { key, dir: "in", text: ev.text, open: location.hash === "#details", method: ev.method, frame: ev.frame_bytes, textBytes: ev.text_bytes,
+          decodeS: ev.decode_s, rssi: ev.rssi, snr: ev.snr, hex: ev.frame, airPlain: ev.air_ms_plain,
+          airFrame: ev.air_ms_frame, attempt: ev.attempt, dups: 0 };
+        msgs.set(key, m); order.push(key);
+        if (live) flyPacket("l", ev.air_ms_frame);
+      } else if (ev.kind === "duplicate") m.dups++;
+      else if (ev.kind === "conflict") m.conflict = ev.text;
+      render(m); stats(); break;
+    }
+    case "decode_failed": sys(`Packet ${ev.msg_id} from ${ev.from} failed its checksum (${ev.reason}). Asked the sender for a raw retry; nothing wrong was shown.`); break;
+    case "radio_down": radio("down", ev.why); sys(`Radio down: ${ev.why}. Reconnecting automatically; messages wait.`, true); break;
+    case "radio_up": radio("up"); sys(`Radio back on ${ev.port} after ${ev.after_s} s.`); break;
+    case "radio_retrying": radio("down", ev.error); break;
+    case "radio_warning": sys(ev.why, true); break;
+    case "resend": sys(`Resending ${ev.count} undelivered message${ev.count > 1 ? "s" : ""} with the original id (${ev.why}).`); break;
+    case "info":
+      if (ev.text.includes("no destination")) provisional.splice(0).forEach((p) => p.el.classList.add("failed"));
+      sys(ev.text, false, true); break;
+    case "send_error": case "rejected": case "rx_error": sys(`${ev.event.replace("_", " ")}: ${ev.error || ev.reason}`, true); break;
+  }
+}
+const att = (ev) => { const m = msgs.get(ev.msg_id); return m && m.attempts[ev.attempt - 1]; };
+
+function adoptProvisional(m) {
+  if (m.el) return;
+  const i = provisional.findIndex((p) => p.text === m.text);
+  if (i >= 0) { m.el = provisional[i].el; provisional.splice(i, 1); }
+}
+
+/* ------------------------------------------------------------------ rendering */
+const logEl = $("log"), scrollEl = $("scroll"), emptyEl = $("empty");
+function nearBottom() { return scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 140; }
+function place(el) {
+  const stick = nearBottom();
+  const empty = $("empty"); if (empty) empty.remove();
+  if (!curLive) el.classList.add("still");
+  logEl.append(el);
+  if (stick) requestAnimationFrame(() => { scrollEl.scrollTop = scrollEl.scrollHeight; });
+}
+function sys(text, bad, pre) {
+  place(h("div", { class: "sys" + (bad ? " bad" : "") }, pre && text.includes("\n") ? h("pre", {}, text.replace(/^ {3}/gm, "")) : text.trim()));
+}
+
+function render(m) {
+  if (!m) return;
+  const stick = nearBottom();
+  if (!m.el) { m.el = h("div", { class: "row " + m.dir }); place(m.el); }
+  const bubble = h("div", { class: "bubble", title: "Show encoding details", onclick: () => { m.open = !m.open; render(m); } }, m.text);
+  const meta = m.dir === "out" ? outMeta(m) : inMeta(m);
+  const st = m.outcome && m.outcome.state;
+  m.el.className = "row " + m.dir + (m.dir === "out" && !st ? " pending" : "") + (st && !st.startsWith("VERIFIED") && st !== "CONFLICT" ? " failed" : "")
+    + (m.el.classList.contains("still") || !curLive ? " still" : "");
+  m.el.replaceChildren(bubble, meta, m.open ? details(m) : "");
+  if (stick) requestAnimationFrame(() => { scrollEl.scrollTop = scrollEl.scrollHeight; });
+}
+
+function bytesLine(method, plain, onAir, airPlain, airFrame, animEl) {
+  const pct = plain ? Math.round((1 - onAir / plain) * 100) : 0;
+  const parts = [h("span", { class: "tag" + (method === "llm" ? " solid" : "") }, METHOD[method] || method)];
+  const big = h("span", { class: "big" }, `${fmt(plain)} B → `, animEl || `${fmt(onAir)} B`, " on air");
+  parts.push(big);
+  if (pct > 0) parts.push(h("span", { class: "save" }, `−${pct}%`));
+  else if (onAir > plain) parts.push(h("span", { class: "dim", title: "Very short texts are smaller than the 10 B envelope + 2 B checksum that make delivery verifiable" }, `+${onAir - plain} B framing`));
+  if (airPlain && airFrame) parts.push(h("span", { class: "sep" }, "·"), h("span", { class: "num" }, `airtime ${fmt(airPlain)} → ${fmt(airFrame)} ms`));
+  return h("div", { class: "line" }, parts);
+}
+
+function countDown(el, from, to) {
+  const t0 = performance.now(), d = 700;
+  const tick = (t) => { const k = Math.min(1, (t - t0) / d), e = 1 - Math.pow(1 - k, 3);
+    el.textContent = `${fmt(from + (to - from) * e)} B`; if (k < 1) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+}
+
+function outMeta(m) {
+  const a1 = m.attempts[0], last = m.attempts[m.attempts.length - 1];
+  const meta = h("div", { class: "meta" });
+  if (!a1) {
+    meta.append(h("div", { class: "steps" }, m.outcome
+      ? h("span", { class: "step bad" }, (m.outcome.reason || "not sent").replace(/^not sent: /, "Not sent: "))
+      : h("span", { class: "step now" }, "encoding…")));
+    return meta;
+  }
+  const shown = m.outcome && m.outcome.state.startsWith("VERIFIED") ? (m.attempts.find((a) => a.decodeStatus === "VERIFIED" || (a.decode && a.decode.status === "VERIFIED")) || last) : a1;
+  let anim = null;
+  if (m.animate) { anim = h("span", {}, `${fmt(shown.text)} B`); countDown(anim, shown.text, shown.frame); m.animate = false; }
+  meta.append(bytesLine(shown.method, shown.text, shown.frame, shown.airPlain, shown.airFrame, anim));
+
+  const steps = h("div", { class: "steps" });
+  const hasRadioAck = me.kind !== "udp";
+  m.attempts.forEach((a, i) => {
+    if (!a) return;
+    const flying = !m.outcome && a === last;
+    const parts = [];
+    if (i > 0) parts.push(h("span", { class: "step done" }, "raw retry"));
+    else if (m.attempts.length > 1) parts.push(h("span", { class: "dim" }, `try 1 · ${METHOD[a.method]}`));
+    parts.push(h("span", { class: "step done" }, "on air"));
+    if (a.radio) parts.push(h("span", { class: "step " + (a.radio.ok ? "done" : "bad") },
+      a.radio.ok ? "radio ACK " : "no radio ACK", a.radio.ok ? h("span", { class: "t" }, secs(a.radio.ts - a.ts)) : ""));
+    else if (flying && hasRadioAck) parts.push(h("span", { class: "step now" }, "radio ACK"));
+    const ds = (a.decode && a.decode.status) || a.decodeStatus;
+    if (ds === "VERIFIED") parts.push(h("span", { class: "step done" }, "decoded + verified ✓ ",
+      h("span", { class: "t" }, secs(a.decode ? a.decode.ts - a.ts : a.rtt * 1000))));
+    else if (ds === "DECODE_FAILED") parts.push(h("span", { class: "step bad" }, "checksum failed"));
+    else if (ds === "CONFLICT") parts.push(h("span", { class: "step bad" }, "id conflict"));
+    else if (flying) parts.push(h("span", { class: "step now" }, "verified"));
+    else parts.push(h("span", { class: "step bad" }, "no receipt"));
+    if (i > 0) steps.append(h("span", { class: "arrow" }, "→"));
+    parts.forEach((p, j) => { if (j) steps.append(h("span", { class: "arrow" }, "→")); steps.append(p); });
+  });
+  meta.append(steps);
+
+  if (m.outcome) {
+    const st = m.outcome.state, ok = st.startsWith("VERIFIED");
+    const v = m.attempts.find((a) => (a.decode && a.decode.status === "VERIFIED") || a.decodeStatus === "VERIFIED");
+    const total = v ? (v.decode ? v.decode.ts - a1.ts : null) : null;
+    meta.append(h("div", { class: "line" },
+      m.rounds ? h("span", { class: "dim" }, `resent ${m.rounds}×, same id`) : "",
+      h("span", { class: "final" + (ok ? "" : " bad") },
+        ok ? `Delivered ✓${total != null ? " in " + secs(total) : ""}${st === "VERIFIED_LATE" ? " (late)" : ""}`
+           : st === "CONFLICT" ? "Rejected: id conflict" : st === "REJECTED" ? (m.outcome.reason || "Not sent") : "Not delivered yet — will resend")));
+  } else if (m.rounds) meta.append(h("div", { class: "line" }, h("span", { class: "dim" }, `resend ${m.rounds}, same id`)));
+  return meta;
+}
+
+function inMeta(m) {
+  const meta = h("div", { class: "meta" });
+  const pct = m.textBytes ? Math.round((1 - m.frame / m.textBytes) * 100) : 0;
+  meta.append(h("div", { class: "line" },
+    h("span", { class: "tag" + (m.method === "llm" ? " solid" : "") }, METHOD[m.method] || m.method),
+    h("span", { class: "big" }, `${fmt(m.frame)} B on air → ${fmt(m.textBytes)} B`),
+    pct > 0 ? h("span", { class: "save" }, `−${pct}%`) : "",
+    m.airPlain ? [h("span", { class: "sep" }, "·"), h("span", { class: "num" }, `airtime ${fmt(m.airFrame)} vs ${fmt(m.airPlain)} ms`)] : ""));
+  meta.append(h("div", { class: "steps" },
+    h("span", { class: "step done" }, "decoded ", h("span", { class: "t" }, `${m.decodeS.toFixed(1)} s`)),
+    h("span", { class: "arrow" }, "·"), h("span", { class: "step done" }, "checksum ✓"),
+    h("span", { class: "arrow" }, "·"), h("span", { class: "step done" }, "receipt sent"),
+    m.rssi != null ? [h("span", { class: "arrow" }, "·"), h("span", { class: "num" }, `${m.rssi} dBm · SNR ${m.snr} dB`)] : "",
+    m.attempt > 1 ? [h("span", { class: "arrow" }, "·"), h("span", { class: "dim" }, `arrived on raw retry`)] : ""));
+  if (m.dups) meta.append(h("div", { class: "line dim" }, `received again ${m.dups}× (resend, same id): shown once`));
+  if (m.conflict) meta.append(h("div", { class: "line" }, h("span", { class: "final bad" }, "Same id arrived with different text: rejected")));
+  return meta;
+}
+
+/* ------------------------------------------------------------------ details panel */
+function details(m) {
+  const box = h("div", { class: "details", onclick: (e) => e.stopPropagation() });
+  const hex = m.dir === "out" ? ((m.attempts.find((a) => a.decode && a.decode.status === "VERIFIED") || m.attempts[0] || {}).hex) : m.hex;
+  const used = m.dir === "out" ? ((m.attempts.find((a) => a.decode && a.decode.status === "VERIFIED") || m.attempts[0] || {}).method) : m.method;
+  const cmp = h("section", {}, h("h4", {}, "What each encoding would put on air"), h("div", { class: "dim" }, "calculating…"));
+  box.append(cmp);
+  loadPreview(m.text).then((p) => cmp.replaceChildren(h("h4", {}, "What each encoding would put on air"), compare(p, used), survival(p)));
+  if (hex) box.append(anatomy(hex));
+  return box;
+}
+function loadPreview(text, typing) {
+  if (!previews.has(text)) {
+    const p = fetch("/preview?text=" + encodeURIComponent(text) + (typing ? "&typing=1" : "")).then((r) => r.json());
+    previews.set(text, p);
+    p.then((x) => { if (x.stale) previews.delete(text); }, () => previews.delete(text));
+  }
+  return previews.get(text);
+}
+function compare(p, used) {
+  const rows = [["Stock Meshtastic", p.text_bytes, p.plain_air_ms, null]];
+  for (const [k, label] of [["raw", "Raw + envelope"], ["unishox2", "Unishox2"], ["llm", "Our LLM codec"]]) {
+    const x = p.methods[k]; if (x && !x.error) rows.push([label, x.frame, x.air_ms, k]);
+  }
+  const max = Math.max(...rows.map((r) => r[1]), 1);
+  const grid = h("div", { class: "cmp" });
+  for (const [label, b, ms, k] of rows) {
+    const sel = k && k === used;
+    const bar = h("i", { class: sel ? "sel" : "", style: "width:0" });
+    requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = Math.max(2, (b / max) * 100) + "%"; }));
+    grid.append(h("div", { class: "lb" + (sel ? " sel" : "") }, label), h("div", { class: "track" }, bar),
+      h("div", { class: "v" + (sel ? " sel" : "") }, `${fmt(b)} B · ${fmt(ms)} ms`));
+  }
+  return grid;
+}
+function survival(p) {
+  if (!p.survival) return "";
+  const s = p.survival, pc = (x) => Math.round(x * 100) + "%";
+  return h("section", {}, h("h4", {}, "Chance of surviving collisions on a 25%-busy channel"),
+    h("div", { class: "surv" },
+      h("div", {}, h("b", {}, `${pc(s.plain_1hop)} → ${pc(s.ours_1hop)}`), "1 hop, stock → ours"),
+      h("div", {}, h("b", {}, `${pc(s.plain_3hop)} → ${pc(s.ours_3hop)}`), "3 hops, stock → ours")));
+}
+function anatomy(hex) {
+  const b = hex.match(/../g) || [];
+  const wrap = h("div", { class: "hex" });
+  b.forEach((x, i) => wrap.append(h("span", { class: i < 10 ? "env" : i < 12 ? "hdr" : i >= b.length - 2 ? "crc" : "body" }, x)));
+  return h("section", {}, h("h4", {}, `The packet on air · ${b.length} bytes`), wrap,
+    h("div", { class: "legend" },
+      h("span", {}, h("i", { style: "background:var(--surface-3)" }), "envelope 10 B: id, attempt, time"),
+      h("span", {}, h("i", { style: "background:var(--text-3)" }), "header 2 B"),
+      h("span", {}, h("i", { style: "background:var(--text)" }), `compressed text ${Math.max(0, b.length - 14)} B`),
+      h("span", {}, h("i", { style: "box-shadow:inset 0 0 0 1px var(--text-2)" }), "checksum 2 B")));
+}
+
+/* ------------------------------------------------------------------ summary */
+function stats() {
+  let plain = 0, air = 0, airPlain = 0, airOurs = 0, sent = 0, ok = 0, retries = 0, rtts = [];
+  for (const k of order) {
+    const m = msgs.get(k);
+    if (m.dir === "in") { plain += m.textBytes; air += m.frame; airPlain += m.airPlain || 0; airOurs += m.airFrame || 0; continue; }
+    if (!m.outcome || m.outcome.state === "REJECTED") continue;
+    sent++;
+    if (m.attempts.length > 1) retries++;
+    if (m.outcome.state.startsWith("VERIFIED")) {
+      ok++;
+      plain += m.outcome.textBytes; air += m.outcome.air;
+      for (const a of m.attempts) if (a) { airPlain += a === m.attempts[0] ? a.airPlain : 0; airOurs += a.airFrame; }
+      const v = m.attempts.find((a) => a && a.decode && a.decode.status === "VERIFIED");
+      if (v) rtts.push(v.decode.ts - m.attempts[0].ts);
+    }
+  }
+  if (plain) {
+    const p = Math.round((1 - air / plain) * 100);
+    $("s-bytes").textContent = (p >= 0 ? "−" : "+") + Math.abs(p) + "%";
+    $("s-bytes-s").textContent = `${fmt(plain)} B text → ${fmt(air)} B`;
+    $("s-bytes-m").style.width = Math.min(100, (air / plain) * 100) + "%";
+  }
+  if (airPlain) {
+    const p = Math.round((1 - airOurs / airPlain) * 100);
+    $("s-air").textContent = (p >= 0 ? "−" : "+") + Math.abs(p) + "%";
+    $("s-air-s").textContent = `${secs(airPlain)} → ${secs(airOurs)}`;
+    $("s-air-m").style.width = Math.min(100, (airOurs / airPlain) * 100) + "%";
+  }
+  if (rtts.length) {
+    $("s-rtt").textContent = secs(rtts.reduce((a, b) => a + b, 0) / rtts.length);
+    $("s-rtt-s").textContent = `last ${secs(rtts[rtts.length - 1])} · ${rtts.length} msg${rtts.length > 1 ? "s" : ""}`;
+  }
+  if (sent) {
+    $("s-ok").textContent = `${ok}/${sent}`;
+    $("s-ok-s").textContent = retries ? `${retries} needed the raw retry` : "checksum-verified";
+  }
+}
+
+/* ------------------------------------------------------------------ header */
+function radio(st, why) {
+  const p = $("radio-pill");
+  p.replaceChildren(h("span", { class: "dot" + (st === "up" ? "" : st === "down" ? " wait" : " wait") }), h("b", {}, "Radio"),
+    h("span", { class: "txt" }, st === "up" ? "connected" : "reconnecting…"));
+  p.title = why || "";
+}
+function signal() {
+  if (!lastSignal) return;
+  const { rssi, snr } = lastSignal, lvl = rssi > -75 ? 4 : rssi > -95 ? 3 : rssi > -110 ? 2 : 1;
+  const bars = [...$("sig-pill").querySelectorAll(".bars span")];
+  bars.forEach((b, i) => b.classList.toggle("on", i < lvl));
+  $("sig-pill").querySelector(".txt").textContent = `${rssi} dBm · SNR ${snr} dB`;
+}
+function setPeer(id, name) {
+  if (!id) return;
+  $("peer-id").textContent = id;
+  if (name) $("peer-name").textContent = name;
+}
+function flyPacket(dir, ms) {
+  const dot = h("i", { class: "fly-" + dir, style: `--dur:${Math.max(250, Math.min(ms || 600, 2500))}ms` });
+  $("link-line").append(dot);
+  setTimeout(() => dot.remove(), Math.max(300, Math.min(ms || 600, 2500)) + 100);
+}
+
+async function refreshState() {
+  try {
+    const s = await (await fetch("/state")).json();
+    me = s.me;
+    $("me-name").textContent = s.me.name || "This laptop";
+    $("me-id").textContent = [s.me.id, s.me.port].filter(Boolean).join(" · ");
+    if (s.peer.id) setPeer(s.peer.id, s.peer.name || "Peer");
+    radio(s.radio.up ? "up" : "down");
+    const c = $("codec-pill");
+    c.replaceChildren(h("span", { class: "dot" + (s.codec.ok ? "" : " bad") }), h("b", {}, "Codec"),
+      h("span", { class: "txt mono" }, s.codec.ok ? `SmolLM2 · ${s.codec.fingerprint} ✓` : "raw / Unishox2 only"));
+    c.title = s.codec.status;
+  } catch (e) {
+    radio("down", "meshchat is not running");
+  }
+}
+
+/* ------------------------------------------------------------------ compose */
+const input = $("input"), hint = $("hint");
+let pvTimer = null, pvSeq = 0;
+input.addEventListener("input", () => {
+  clearTimeout(pvTimer);
+  const text = input.value;
+  if (!text.trim() || text.startsWith("/")) { hint.textContent = text.startsWith("/") ? "Command: runs on this laptop." : "Type a message. The size it will take on air appears here as you type."; return; }
+  pvTimer = setTimeout(async () => {
+    const seq = ++pvSeq;
+    const p = await loadPreview(text, true).catch(() => null);
+    if (!p || p.stale || seq !== pvSeq || input.value !== text) return;
+    const best = p.methods[p.best];
+    if (!best) { hint.replaceChildren(h("span", { class: "bad" }, "This text can't be sent.")); return; }
+    const fits = best.frame <= p.limit;
+    hint.replaceChildren(
+      h("span", {}, h("b", {}, `${fmt(p.text_bytes)} B → ${fmt(best.frame)} B`), " on air"),
+      h("span", { class: "sep" }, "·"), h("span", {}, METHOD[p.best]),
+      h("span", { class: "sep" }, "·"), h("span", {}, "airtime ", h("b", {}, `${fmt(best.air_ms)} ms`), ` vs ${fmt(p.plain_air_ms)} ms stock`),
+      h("span", { class: "sep" }, "·"),
+      fits ? h("span", {}, "fits in one packet ✓") : h("span", { class: "bad" }, `too long: ${best.frame} B > ${p.limit} B radio limit`));
+  }, 350);
+});
+async function post(line) {
+  const r = await fetch("/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ line }) });
+  if (!r.ok) sys((await r.json()).error || "could not send", true);
+}
+function send(prefix) {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = ""; hint.textContent = "Type a message. The size it will take on air appears here as you type.";
+  if (!text.startsWith("/")) {
+    const el = h("div", { class: "row out pending" }, h("div", { class: "bubble" }, text),
+      h("div", { class: "meta" }, h("div", { class: "steps" }, h("span", { class: "step now" }, "encoding…"))));
+    place(el); provisional.push({ text, el });
+  }
+  post((prefix || "") + text);
+}
+$("send").onclick = () => send();
+input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); send(); } });
+$("more").onclick = (e) => { e.stopPropagation(); $("menu").hidden = !$("menu").hidden; };
+document.addEventListener("click", () => { $("menu").hidden = true; });
+$("menu").addEventListener("click", (e) => {
+  const act = e.target.closest("button")?.dataset.act; if (!act) return;
+  $("menu").hidden = true;
+  if (act === "raw" || act === "corrupt") {
+    if (!input.value.trim()) { input.focus(); hint.textContent = act === "raw" ? "Type the text to send uncompressed, then choose this again." : "Type the text for the corruption demo, then choose this again."; return; }
+    send(act === "raw" ? "/raw " : "/corrupt ");
+  } else if (act === "probes") post("/probes");
+  else if (act === "status") post("/status");
+});
+
+/* ------------------------------------------------------------------ events */
+function connect() {
+  const es = new EventSource("/events");
+  es.onopen = () => {   // the server replays the whole session on every (re)connect: start from a clean slate
+    msgs = new Map(); order = []; provisional = []; previews.clear();
+    logEl.replaceChildren(emptyEl); liveSince = Date.now(); refreshState();
+  };
+  es.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { console.error(err, e.data); } };
+  es.onerror = () => radio("down", "lost connection to meshchat; retrying");
+}
+connect();
+refreshState();
+setInterval(refreshState, 3000);
+input.focus();
+</script>
+</body>
+</html>

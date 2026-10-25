@@ -15,8 +15,10 @@ If the receipt reports a failed decode, or none arrives, the sender retries once
 Built for crashing boards: if a board crashes, reboots or drops off USB, meshchat reopens it by itself. Messages typed meanwhile wait, and undelivered messages are resent with their original IDs (SETUP.md, stage 5).
 
 ```
-mc.cmd            launcher:  .\mc check | chat | explain | selftest
+mc.cmd            launcher:  .\mc check | chat | gui | explain | selftest
 meshchat.py       the program
+webui.py, webui\  `mc gui`: the same chat as a local browser page with per-message codec/airtime/delivery metrics
+                  (standard library HTTP + Server-Sent Events, one offline HTML file)
 codec\            mesh_codec.py (the proven arithmetic coder, unchanged), runtime.py (pinned llama.cpp + hash
                   checks), envelope.py (message id + receipts), link.py (two-way engine), transports.py (supervised
                   Meshtastic radio; a UDP link for bench tests)
@@ -24,7 +26,7 @@ runtime\win-x64\  pinned llama.cpp + Unishox2 DLLs, SHA-256 checked on every sta
 wheels\           all Python packages for Windows (Python 3.11-3.13), so setup works offline
 data\             shared context (hash pinned) and cross-machine reference packets
 models\           SmolLM2-360M.Q8_0.gguf (386 MB, not in the zip; SHA-256 8e0b159d...995eb4)
-tests\            27 tests: two-way, every failure path, simulated board crashes (drop / reboot / freeze)
+tests\            34 tests: two-way, every failure path, simulated board crashes (drop / reboot / freeze)
 logs\             one JSONL per chat session
 ```
 

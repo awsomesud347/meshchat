@@ -293,90 +293,92 @@ def cmd_selftest(args) -> int:
     return 0 if (fails == 0 and exact) else 1
 
 
-def cmd_chat(args) -> int:
-    import link
-    model, status = load_model(args)
-    log_emit = make_emit("chat", args.verbose)
-    pending: dict[int, tuple] = {}        # msg_id -> (text, kwargs, rounds) for messages without a decode receipt
-    pend_lock = threading.Lock()
-    jobs: queue.Queue = queue.Queue()
+class ChatSession:
+    """The chat engine shared by the terminal (`chat`) and browser (`gui`) front ends: one sender thread, resends of
+    messages without a decode receipt (same ids), and the slash commands. Command replies go to the console and out
+    as {"event": "info"} so a browser can show them too."""
 
-    def resend_pending(why):
-        with pend_lock:
-            items = [(mid, v) for mid, v in pending.items() if v[2] < args.max_resends]
-            for mid, (text, kw, rounds) in items:
-                pending[mid] = (text, kw, rounds + 1)
-        if items:
-            log_emit({"event": "resend", "count": len(items), "why": why})
-            for mid, (text, kw, rounds) in items:
-                jobs.put((text, {**kw, "msg_id": mid}))
+    def __init__(self, args, model, log_emit, make_transport):
+        import link
+        self.args, self.model, self._log = args, model, log_emit
+        self.pending: dict[int, tuple] = {}   # msg_id -> (text, kwargs, rounds) for messages without a decode receipt
+        self.pend_lock = threading.Lock()
+        self.jobs: queue.Queue = queue.Queue()
+        self.stats = {"sent": 0, "verified": 0, "text": 0, "air": 0}
+        self.dest = args.dest
+        self.t = make_transport(self.emit)
+        timeout = args.ack_timeout or (8.0 if self.t.kind == "udp" else 30.0)
+        self.link = link.Link(self.t, model, self.emit, ack_timeout=timeout)
+        threading.Thread(target=self._worker, daemon=True, name="sender").start()
+        threading.Thread(target=self._periodic_resend, daemon=True, name="resender").start()
 
-    def emit(ev):
-        log_emit(ev)
+    def emit(self, ev):
+        self._log(ev)
         k = ev.get("event")
         if k == "late_success":
-            with pend_lock:
-                pending.pop(int(ev["msg_id"], 16), None)
-        elif k == "radio_up" and not args.no_auto_resend:
-            resend_pending("radio is back")
+            with self.pend_lock:
+                self.pending.pop(int(ev["msg_id"], 16), None)
+        elif k == "radio_up" and not self.args.no_auto_resend:
+            self.resend_pending("radio is back")
 
-    t = open_transport(args, status=emit)
-    timeout = args.ack_timeout or (8.0 if t.kind == "udp" else 30.0)
-    L = link.Link(t, model, emit, ack_timeout=timeout)
-    say("=" * 100)
-    say(f"me:    {t.describe()}")
-    say(f"codec: {status}")
-    dest = {"v": args.dest}
-    say(f"to:    {dest['v'] or '(nobody yet: use /to !nodeid, or reply after someone messages you)'}")
-    say("type a message and press Enter. /help for commands. Ctrl+C or /quit to stop.")
-    say("=" * 100)
+    def reply(self, text: str):
+        say(text)
+        self._log({"event": "info", "text": text.strip("\n")})
 
-    stats = {"sent": 0, "verified": 0, "text": 0, "air": 0}
+    def resend_pending(self, why):
+        with self.pend_lock:
+            items = [(mid, v) for mid, v in self.pending.items() if v[2] < self.args.max_resends]
+            for mid, (text, kw, rounds) in items:
+                self.pending[mid] = (text, kw, rounds + 1)
+        if items:
+            self._log({"event": "resend", "count": len(items), "why": why})
+            for mid, (text, kw, rounds) in items:
+                self.jobs.put((text, {**kw, "msg_id": mid}))
 
-    def worker():
+    def _worker(self):
+        args, t, L = self.args, self.t, self.link
         while True:
-            job = jobs.get()
+            job = self.jobs.get()
             if job is None:
                 return
             text, kw = job
-            to = dest["v"] or L.last_sender or ("!00000000" if t.kind == "udp" else None)
+            to = self.dest or L.last_sender or ("!00000000" if t.kind == "udp" else None)
             if not to:
-                say("   no destination: /to !nodeid first (see /nodes)")
-                jobs.task_done()
+                self.reply("   no destination: /to !nodeid first (see /nodes)")
+                self.jobs.task_done()
                 continue
             try:
                 out = L.send(text, to, **kw)
             except Exception as e:   # never let one message kill the sender thread
-                say(f"   !! send failed: {e!r}")
-                jobs.task_done()
+                self.reply(f"   !! send failed: {e!r}")
+                self.jobs.task_done()
                 continue
             keep = {k: v for k, v in kw.items() if k not in ("corrupt_first", "msg_id")}
-            with pend_lock:
+            with self.pend_lock:
                 if out.state in ("VERIFIED", "VERIFIED_LATE", "CONFLICT", "REJECTED"):
-                    pending.pop(out.msg_id, None)
+                    self.pending.pop(out.msg_id, None)
                 else:
-                    rounds = pending.get(out.msg_id, (None, None, 0))[2]
-                    pending[out.msg_id] = (text, keep, rounds)
+                    rounds = self.pending.get(out.msg_id, (None, None, 0))[2]
+                    self.pending[out.msg_id] = (text, keep, rounds)
                     if rounds >= args.max_resends:
-                        say(f"   !! {out.msg_id:08x} still undelivered after {rounds} resends; /retry to try again")
-            stats["sent"] += 1
+                        self.reply(f"   !! {out.msg_id:08x} still undelivered after {rounds} resends; "
+                                   f"/retry to try again")
+            self.stats["sent"] += 1
             if out.state.startswith("VERIFIED"):
-                stats["verified"] += 1
-                stats["text"] += out.text_bytes
-                stats["air"] += out.air_bytes
-            jobs.task_done()
+                self.stats["verified"] += 1
+                self.stats["text"] += out.text_bytes
+                self.stats["air"] += out.air_bytes
+            self.jobs.task_done()
 
-    threading.Thread(target=worker, daemon=True, name="sender").start()
-
-    def periodic_resend():   # covers the OTHER board crashing: our radio never goes down, so radio_up never fires
+    def _periodic_resend(self):   # covers the OTHER board crashing: our radio never goes down, so radio_up never fires
+        args = self.args
         while args.resend_every > 0 and not args.no_auto_resend:
             time.sleep(args.resend_every)
-            if jobs.unfinished_tasks == 0 and getattr(t, "is_up", True):
-                resend_pending(f"no receipt yet, periodic retry every {args.resend_every:g}s")
+            if self.jobs.unfinished_tasks == 0 and getattr(self.t, "is_up", True):
+                self.resend_pending(f"no receipt yet, periodic retry every {args.resend_every:g}s")
 
-    threading.Thread(target=periodic_resend, daemon=True, name="resender").start()
-
-    def handle(line: str) -> bool:
+    def handle(self, line: str) -> bool:
+        t, L, model, jobs = self.t, self.link, self.model, self.jobs
         if not line.strip():
             return True
         if not line.startswith("/"):
@@ -387,13 +389,13 @@ def cmd_chat(args) -> int:
         if cmd in ("/quit", "/exit", "/q"):
             return False
         if cmd == "/help":
-            say(__doc__.split("Commands:")[1])
+            self.reply(__doc__.split("Commands:")[1])
         elif cmd == "/to":
-            dest["v"] = rest.strip() or None
-            say(f"   now sending to {dest['v']}")
+            self.dest = rest.strip() or None
+            self.reply(f"   now sending to {self.dest}")
         elif cmd == "/nodes":
             ns = t.nodes() if hasattr(t, "nodes") else []
-            say("\n".join("   " + n for n in ns) or "   (none heard yet)")
+            self.reply("\n".join("   " + n for n in ns) or "   (none heard yet)")
         elif cmd == "/raw":
             jobs.put((rest, {"force_method": mc.RAW}))
         elif cmd == "/unishox":
@@ -405,71 +407,95 @@ def cmd_chat(args) -> int:
                 jobs.put((p, {}))
         elif cmd == "/explain":
             if model is None:
-                say("   no model loaded")
+                self.reply("   no model loaded")
             else:
                 with L.mlock:
                     pieces = model.explain(rest)
-                say("   " + " ".join(f"{p['piece'].strip() or '_'}:{p['bits']:.1f}" for p in (pieces or [])))
+                self.reply("   " + " ".join(f"{p['piece'].strip() or '_'}:{p['bits']:.1f}" for p in (pieces or [])))
         elif cmd == "/retry":
-            with pend_lock:
-                for mid in pending:
-                    pending[mid] = (pending[mid][0], pending[mid][1], 0)
-            if pending:
-                resend_pending("/retry")
+            with self.pend_lock:
+                for mid in self.pending:
+                    self.pending[mid] = (self.pending[mid][0], self.pending[mid][1], 0)
+            if self.pending:
+                self.resend_pending("/retry")
             else:
-                say("   nothing undelivered")
+                self.reply("   nothing undelivered")
         elif cmd == "/reconnect":
             if hasattr(t, "reconnect"):
                 t.reconnect()
             else:
-                say("   not a radio link")
+                self.reply("   not a radio link")
         elif cmd == "/status":
             up = getattr(t, "is_up", True)
-            say(f"   link: {t.describe()}\n   radio up: {up}, reconnects: {getattr(t, 'reconnects', 0)}, "
-                f"to: {dest['v'] or L.last_sender or '(nobody)'}")
-            with pend_lock:
-                for mid, (text, kw, rounds) in pending.items():
-                    say(f"   undelivered {mid:08x} (resent {rounds}x): {text[:70]!r}")
-                if not pending:
-                    say("   undelivered: none")
+            lines = [f"   link: {t.describe()}", f"   radio up: {up}, reconnects: {getattr(t, 'reconnects', 0)}, "
+                     f"to: {self.dest or L.last_sender or '(nobody)'}"]
+            with self.pend_lock:
+                for mid, (text, kw, rounds) in self.pending.items():
+                    lines.append(f"   undelivered {mid:08x} (resent {rounds}x): {text[:70]!r}")
+                if not self.pending:
+                    lines.append("   undelivered: none")
+            self.reply("\n".join(lines))
         elif cmd == "/stats":
-            r = stats["text"] / stats["air"] if stats["air"] else 0
-            say(f"   sent {stats['sent']}, verified {stats['verified']}, {stats['text']} B text in "
-                f"{stats['air']} B on air (incl. 10 B envelope + retries), received {len(L.received)}")
+            s = self.stats
+            self.reply(f"   sent {s['sent']}, verified {s['verified']}, {s['text']} B text in "
+                       f"{s['air']} B on air (incl. 10 B envelope + retries), received {len(L.received)}")
         else:
-            say(f"   unknown command {cmd}; /help")
+            self.reply(f"   unknown command {cmd}; /help")
         return True
 
-    for s in args.send or []:
-        handle(s)
+    def bye(self) -> str:
+        s = self.stats
+        return (f"bye: sent {s['sent']} (verified {s['verified']}), received {len(self.link.received)}"
+                + (f", {s['text']} B of text took {s['air']} B on air" if s["air"] else ""))
+
+    def close(self):
+        self.t.close()
+
+
+def cmd_chat(args) -> int:
+    model, status = load_model(args)
+    log_emit = make_emit("chat", args.verbose)
+    s = ChatSession(args, model, log_emit, lambda status_cb: open_transport(args, status=status_cb))
+    say("=" * 100)
+    say(f"me:    {s.t.describe()}")
+    say(f"codec: {status}")
+    say(f"to:    {s.dest or '(nobody yet: use /to !nodeid, or reply after someone messages you)'}")
+    say("type a message and press Enter. /help for commands. Ctrl+C or /quit to stop.")
+    say("=" * 100)
+
+    for line in args.send or []:
+        s.handle(line)
     if args.probes:
-        handle("/probes")
+        s.handle("/probes")
     try:
         if args.batch or args.send or args.probes:
             if args.batch:
                 for line in sys.stdin:
-                    if not handle(line.rstrip("\r\n")):
+                    if not s.handle(line.rstrip("\r\n")):
                         break
-            jobs.join()
+            s.jobs.join()
             time.sleep(args.linger)
         else:
             while True:
                 try:
                     line = input()
                 except EOFError:
-                    jobs.join()
+                    s.jobs.join()
                     time.sleep(args.linger)
                     break
-                if not handle(line):
+                if not s.handle(line):
                     break
     except KeyboardInterrupt:
         pass
     finally:
-        r = stats["text"] / stats["air"] if stats["air"] else 0
-        say(f"\nbye: sent {stats['sent']} (verified {stats['verified']}), received {len(L.received)}"
-            + (f", {stats['text']} B of text took {stats['air']} B on air" if r else ""))
-        t.close()
+        say("\n" + s.bye())
+        s.close()
     return 0
+
+
+def cmd_gui(args) -> int:
+    import webui
+    return webui.run(args)
 
 
 def main():
@@ -489,28 +515,38 @@ def main():
     e = sub.add_parser("explain", help="per-token bit cost of a text")
     model_opts(e)
     e.add_argument("text", nargs="+")
+    def link_opts(p):
+        model_opts(p)
+        p.add_argument("--port", help="radio serial port, e.g. COM4 (auto-detected if exactly one)")
+        p.add_argument("--udp", help="use UDP instead of a radio: local port (e.g. 47000) or IP:PORT to bind")
+        p.add_argument("--peer", help="UDP: the other laptop, IP:PORT (needed on at least one side)")
+        p.add_argument("--name", help="UDP: this endpoint's name (node id is derived from it; default hostname)")
+        p.add_argument("--dest", default=os.environ.get("RADIO_DESTINATION_ID"),
+                       help="who to send to, e.g. !f99260d4 (UDP: optional)")
+        p.add_argument("--ack-timeout", type=float, help="seconds to wait for the decode receipt (30 radio, 8 udp)")
+        p.add_argument("-v", "--verbose", action="store_true", help="show frames in hex and every receipt")
+        p.add_argument("--no-auto-resend", action="store_true",
+                       help="do not resend undelivered messages automatically when the radio comes back")
+        p.add_argument("--max-resends", type=int, default=3, help="automatic resend rounds per message (default 3)")
+        p.add_argument("--resend-every", type=float, default=20.0,
+                       help="seconds between automatic resends of undelivered messages (0 = only when our radio "
+                            "reconnects or on /retry)")
+
     ch = sub.add_parser("chat", help="two-way chat over a radio (--port) or the network (--udp)")
-    model_opts(ch)
-    ch.add_argument("--port", help="radio serial port, e.g. COM4 (auto-detected if exactly one)")
-    ch.add_argument("--udp", help="use UDP instead of a radio: local port (e.g. 47000) or IP:PORT to bind")
-    ch.add_argument("--peer", help="UDP: the other laptop, IP:PORT (needed on at least one side)")
-    ch.add_argument("--name", help="UDP: this endpoint's name (node id is derived from it; default hostname)")
-    ch.add_argument("--dest", default=os.environ.get("RADIO_DESTINATION_ID"),
-                    help="who to send to, e.g. !f99260d4 (UDP: optional)")
-    ch.add_argument("--ack-timeout", type=float, help="seconds to wait for the decode receipt (30 radio, 8 udp)")
+    link_opts(ch)
     ch.add_argument("--send", action="append", help="send this text on start (repeatable)")
     ch.add_argument("--probes", action="store_true", help="send the 8 reference probes on start")
     ch.add_argument("--batch", action="store_true", help="read lines from stdin (scripts), then exit")
     ch.add_argument("--linger", type=float, default=3.0, help="seconds to keep listening before exiting")
-    ch.add_argument("-v", "--verbose", action="store_true", help="show frames in hex and every receipt")
-    ch.add_argument("--no-auto-resend", action="store_true",
-                    help="do not resend undelivered messages automatically when the radio comes back")
-    ch.add_argument("--max-resends", type=int, default=3, help="automatic resend rounds per message (default 3)")
-    ch.add_argument("--resend-every", type=float, default=20.0,
-                    help="seconds between automatic resends of undelivered messages (0 = only when our radio "
-                         "reconnects or on /retry)")
+    g = sub.add_parser("gui", help="the chat in a browser page, with live codec / airtime / delivery metrics")
+    link_opts(g)
+    g.add_argument("--http-port", type=int, default=8765, help="local web port (default 8765)")
+    g.add_argument("--loopback", action="store_true",
+                   help="no radio: talk to a simulated peer inside this process (demo backup)")
+    g.add_argument("--no-browser", action="store_true", help="do not open the browser automatically")
     a = ap.parse_args()
-    sys.exit({"check": cmd_check, "selftest": cmd_selftest, "explain": cmd_explain, "chat": cmd_chat}[a.cmd](a))
+    sys.exit({"check": cmd_check, "selftest": cmd_selftest, "explain": cmd_explain, "chat": cmd_chat,
+              "gui": cmd_gui}[a.cmd](a))
 
 
 if __name__ == "__main__":
