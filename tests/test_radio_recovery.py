@@ -212,6 +212,24 @@ def test_firmware_telemetry_log_is_not_a_reboot(air):
     assert not kinds(ev, "radio_down") and r.is_up
 
 
+def test_blank_lines_around_packets_are_not_a_reboot(air):
+    ev = []
+    r = radio(air, 0xC, "COM6", ev)
+    time.sleep(0.2)
+    _log_lines(air.boards["COM6"], ["", "\x1b[0m", "  ", "", "\x1b[34m\x1b[0m"])   # seen on 2.7.26 right after RX/ACK
+    time.sleep(0.3)
+    assert not kinds(ev, "radio_down") and r.is_up
+
+
+def test_boot_banner_text_is_still_a_reboot(air):
+    ev = []
+    radio(air, 0xC, "COM6", ev)
+    time.sleep(0.2)
+    _log_lines(air.boards["COM6"], ["ets Jul 29 2019 12:21:46", "", "rst:0x1 (POWERON_RESET),boot:0x17", "configsip: 0"])
+    assert wait_for(lambda: kinds(ev, "radio_up"))
+    assert "rebooted" in kinds(ev, "radio_down")[0]["why"]
+
+
 def test_firmware_uptime_going_backwards_is_a_reboot(air):
     ev = []
     radio(air, 0xC, "COM6", ev)

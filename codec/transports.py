@@ -210,6 +210,8 @@ class MeshtasticRadio:
         if iface is not self.iface or self._reconnecting or now - self._opened_at < self.grace_s:
             return
         text = _ANSI.sub("", getattr(iface, "cur_log_line", "") or "")
+        if hasattr(iface, "cur_log_line") and not text.strip():
+            return    # blank / colour-code-only lines arrive around every packet; a boot banner always has text
         m = _FW_LOG.match(text)
         if m:
             up, prev = int(m.group(1)), self._fw_uptime

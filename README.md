@@ -24,7 +24,7 @@ runtime\win-x64\  pinned llama.cpp + Unishox2 DLLs, SHA-256 checked on every sta
 wheels\           all Python packages for Windows (Python 3.11-3.13), so setup works offline
 data\             shared context (hash pinned) and cross-machine reference packets
 models\           SmolLM2-360M.Q8_0.gguf (386 MB, not in the zip; SHA-256 8e0b159d...995eb4)
-tests\            25 tests: two-way, every failure path, simulated board crashes (drop / reboot / freeze)
+tests\            27 tests: two-way, every failure path, simulated board crashes (drop / reboot / freeze)
 logs\             one JSONL per chat session
 ```
 

@@ -54,7 +54,7 @@ Setup does the following:
 2. Finds Python and creates `.venv\` (a private Python for this folder only).
 3. Installs packages **offline** from `wheels\`. It only uses the internet if that fails.
 4. Finds the model and checks its SHA-256.
-5. Runs the tests (25, with simulated radios including crash cases).
+5. Runs the tests (27, with simulated radios including crash cases).
 6. Runs the codec check (stage 2).
 7. Lists the serial ports.
 
@@ -65,7 +65,7 @@ Using py -3.12
 packages OK
 model SHA-256 OK
 --- tests (simulated radios, no hardware needed) ---
-25 passed
+27 passed
 --- codec check (must say fingerprint 422ac23fca10 and PASS) ---
 fingerprint 422ac23fca10  OK
 ...
