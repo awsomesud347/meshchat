@@ -1,0 +1,45 @@
+{
+ "fingerprint": "422ac23fca10",
+ "probes": [
+  {
+   "text": "School gym evacuation complete. Everyone our team checked is outside.",
+   "method": 2,
+   "packet": "2260a7fb9909c14ba852f03f1ee117b90fa276"
+  },
+  {
+   "text": "House beside the school: water rising downstairs, two people waiting upstairs.",
+   "method": 2,
+   "packet": "2260b6a1c31d0cb256d268cdf50af4503738d01c"
+  },
+  {
+   "text": "Correction: the school gym is clear, but someone may still be upstairs in the main building.",
+   "method": 2,
+   "packet": "2260b6314cdc136cea2f9a62612480d1f88257"
+  },
+  {
+   "text": "Shelter needs blankets for tonight.",
+   "method": 2,
+   "packet": "2260e66ba1a123e8d8bb"
+  },
+  {
+   "text": "Repeating the school report: possible person upstairs in the main building.",
+   "method": 2,
+   "packet": "22606273c7d2d9a7e147b55d0fde60dda8b6dd"
+  },
+  {
+   "text": "  two leading spaces,  double space, trailing space ",
+   "method": 2,
+   "packet": "226003fcb285c0ba6811170aaffcc7d2c8763b"
+  },
+  {
+   "text": "line one\nline two\tafter a tab",
+   "method": 1,
+   "packet": "2160f178d5631ce2f1a8f7a1ef3f10f6a544fa885e"
+  },
+  {
+   "text": "Café crème — 避難所 🚑 needs water",
+   "method": 2,
+   "packet": "2260ffa28cdd3dcfac2fc7e951e79656588c9b26c0eb44"
+  }
+ ]
+}

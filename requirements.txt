@@ -1,0 +1,9 @@
+# Same versions on BOTH laptops. llama.cpp is NOT here: it is the pinned build in runtime\win-x64\.
+# Never `pip install llama-cpp-python` into this venv (a stock build decodes differently).
+numpy==2.4.6
+diskcache==5.6.3
+jinja2==3.1.6
+markupsafe==3.0.4
+typing_extensions==4.16.0
+meshtastic==2.7.11
+pytest>=8

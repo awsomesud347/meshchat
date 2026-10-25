@@ -1,0 +1,3 @@
+Copy SmolLM2-360M.Q8_0.gguf into this folder (same file on both laptops).
+SHA-256 8e0b159d81bce47993580827a26ec01e64092edd55165b6076e6fbfa37995eb4
+On Sud's laptop it is at D:\Projects\calhacks-mesh\models\SmolLM2-360M.Q8_0.gguf
