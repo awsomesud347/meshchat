@@ -193,6 +193,34 @@ def test_raw_lines_right_after_open_are_ignored(air):
     assert not kinds(ev, "radio_down")
 
 
+def _log_lines(board, lines):
+    for s in lines:
+        board.iface.cur_log_line = s
+        board.iface._owner._raw_line(board.iface)
+
+
+def test_firmware_telemetry_log_is_not_a_reboot(air):
+    ev = []
+    r = radio(air, 0xC, "COM6", ev)
+    time.sleep(0.2)
+    for up in (181, 241, 301):       # what a real 2.7.26 board prints every minute with the API session up
+        _log_lines(air.boards["COM6"], [
+            f"\x1b[0m\x1b[32mINFO  \x1b[0m| ??:??:?? {up} [DeviceTelemetry] \x1b[32mSend: battery_level=101, uptime={up}",
+            f"\x1b[0m\x1b[34mDEBUG \x1b[0m| ??:??:?? {up} [DeviceTelemetry] \x1b[34mPartially randomized packet id 7",
+            f"\x1b[0m\x1b[34mDEBUG \x1b[0m| ??:??:?? {up} [DeviceTelemetry] \x1b[34mupdateTelemetry LOCAL"])
+    time.sleep(0.3)
+    assert not kinds(ev, "radio_down") and r.is_up
+
+
+def test_firmware_uptime_going_backwards_is_a_reboot(air):
+    ev = []
+    radio(air, 0xC, "COM6", ev)
+    time.sleep(0.2)
+    _log_lines(air.boards["COM6"], ["INFO  | ??:??:?? 301 [DeviceTelemetry] Send", "INFO  | ??:??:?? 2 [Main] Booted"])
+    assert wait_for(lambda: kinds(ev, "radio_up"))
+    assert "uptime went 301s -> 2s" in kinds(ev, "radio_down")[0]["why"]
+
+
 def test_frozen_board_manual_reconnect(air):
     ra, rb, la, lb, ev_a, _ = pair(air, ack_timeout=0.4)
     air.boards["COM4"].freeze()

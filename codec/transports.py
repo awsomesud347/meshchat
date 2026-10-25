@@ -14,6 +14,7 @@ Loopback         in-process, for tests and `meshchat.py selftest`.
 from __future__ import annotations
 
 import hashlib
+import re
 import socket
 import struct
 import threading
@@ -21,6 +22,11 @@ import time
 from typing import Callable, Optional
 
 PRIVATE_APP = 256
+
+# Firmware log lines ("INFO  | ??:??:?? 181 [DeviceTelemetry] ...") are printed as text even while the API session is
+# up (2.7.x does this for the per-minute telemetry), so they are NOT a sign of a reboot. Only uptime going backwards is.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_FW_LOG = re.compile(r"^\s*(?:TRACE|DEBUG|INFO|WARN|ERROR|CRIT)\s*\|\s*\S+\s+(\d+)\s")
 
 
 def node_hex(num: int) -> str:
@@ -101,6 +107,8 @@ class MeshtasticRadio:
         self._reconnecting = False
         self._closed = False
         self._raw: list[float] = []
+        self._raw_lines: list[str] = []   # the text that tripped the reboot detector, logged with radio_down
+        self._fw_uptime: Optional[int] = None
         self._down_since: Optional[float] = None
         self._opened_at = 0.0
         self.iface = None
@@ -134,6 +142,8 @@ class MeshtasticRadio:
             self.node_id = node_hex(num)
             self.name = (info.get("user") or {}).get("longName") or port
             self._raw.clear()
+            self._raw_lines.clear()
+            self._fw_uptime = None
             self._opened_at = time.time()
             self._down_since = None
             self._up.set()
@@ -154,18 +164,21 @@ class MeshtasticRadio:
                 time.sleep(self.retry_s)
         return False
 
-    def _trigger(self, why: str):
+    def _trigger(self, why: str, lines: Optional[list] = None):
         with self._lock:
             if self._reconnecting or self._closed:
                 return
             self._reconnecting = True
             self._up.clear()
             old = self.iface
-        threading.Thread(target=self._reconnect, args=(why, old), daemon=True, name="radio-reconnect").start()
+        threading.Thread(target=self._reconnect, args=(why, old, lines), daemon=True, name="radio-reconnect").start()
 
-    def _reconnect(self, why, old):
+    def _reconnect(self, why, old, lines=None):
         t0 = time.time()
-        self.status({"event": "radio_down", "why": why, "port": self.port})
+        ev = {"event": "radio_down", "why": why, "port": self.port}
+        if lines:
+            ev["raw_lines"] = lines
+        self.status(ev)
         _close_quietly(old)
         time.sleep(1.0)   # let a rebooting board finish enumerating
         ok = self._open_until_up()
@@ -196,9 +209,20 @@ class MeshtasticRadio:
         now = time.time()
         if iface is not self.iface or self._reconnecting or now - self._opened_at < self.grace_s:
             return
-        self._raw = [t for t in self._raw if now - t < 5.0] + [now]
+        text = _ANSI.sub("", getattr(iface, "cur_log_line", "") or "")
+        m = _FW_LOG.match(text)
+        if m:
+            up, prev = int(m.group(1)), self._fw_uptime
+            self._fw_uptime = up
+            if prev is not None and up < prev:
+                self._trigger(f"board rebooted (uptime went {prev}s -> {up}s)", [repr(text)[:200]])
+            return
+        line = repr(text)[:200]   # not a firmware log line: ROM boot banner, crash dump, ...
+        keep = [i for i, t in enumerate(self._raw) if now - t < 5.0]
+        self._raw = [self._raw[i] for i in keep] + [now]
+        self._raw_lines = [self._raw_lines[i] for i in keep if i < len(self._raw_lines)] + [line]
         if len(self._raw) >= 3:
-            self._trigger("board rebooted (boot log on serial, API session gone)")
+            self._trigger("board rebooted (boot log on serial, API session gone)", list(self._raw_lines))
 
     def _watchdog(self):
         while not self._closed:

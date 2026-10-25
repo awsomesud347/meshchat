@@ -54,7 +54,7 @@ Setup does the following:
 2. Finds Python and creates `.venv\` (a private Python for this folder only).
 3. Installs packages **offline** from `wheels\`. It only uses the internet if that fails.
 4. Finds the model and checks its SHA-256.
-5. Runs the tests (23, with simulated radios including crash cases).
+5. Runs the tests (25, with simulated radios including crash cases).
 6. Runs the codec check (stage 2).
 7. Lists the serial ports.
 
@@ -65,7 +65,7 @@ Using py -3.12
 packages OK
 model SHA-256 OK
 --- tests (simulated radios, no hardware needed) ---
-23 passed
+25 passed
 --- codec check (must say fingerprint 422ac23fca10 and PASS) ---
 fingerprint 422ac23fca10  OK
 ...
@@ -248,7 +248,7 @@ The boards are known to crash. **Don't restart meshchat.** It recovers by itself
 | What the board does | What meshchat does | What you see |
 |---|---|---|
 | drops off USB (crash, brown-out, cable bump) | reopens the port every 2 s; if the COM number changed and only one radio is plugged in, it uses that one | `!! RADIO DOWN: serial connection lost` … `OK RADIO BACK on COM4 after 6.2s` |
-| reboots while USB stays connected | notices the boot log text on the serial line, reopens, redoes the Meshtastic handshake | `!! RADIO DOWN: board rebooted (boot log on serial ...)` … `OK RADIO BACK` |
+| reboots while USB stays connected | notices boot text on the serial line, or the firmware's uptime going backwards, then reopens and redoes the Meshtastic handshake. Normal firmware log lines (like the per-minute telemetry) are ignored | `!! RADIO DOWN: board rebooted (boot log on serial ...)` … `OK RADIO BACK` |
 | library stuck "disconnected" | reopens after 30 s | `!! RADIO DOWN: radio not reconnected by itself after 30s` |
 | freezes silently (no reboot, nothing) | can't be detected automatically | sends end `NOT_DELIVERED`. Type `/reconnect`, or unplug and replug the USB; meshchat picks the board back up |
 
